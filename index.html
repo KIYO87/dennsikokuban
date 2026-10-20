@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f7fb">
+  <title>でんし黒板</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17253c;
+      --muted: #718099;
+      --blue: #2868e8;
+      --line: #e4eaf2;
+      --surface: #fff;
+      font-family: "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f7fb; color: var(--ink); min-height: 100vh; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    .topbar {
+      height: 76px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 5vw; background: var(--surface); border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-size: 21px; font-weight: 800; letter-spacing: .02em; }
+    .brand-mark {
+      width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center;
+      color: white; background: linear-gradient(145deg, #4389ff, #2357d9); font-size: 21px;
+    }
+    .top-actions { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 13px; }
+    .container { width: min(1100px, 90vw); margin: 48px auto 80px; }
+    .heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    h1 { margin: 0 0 8px; font-size: clamp(26px, 3vw, 34px); letter-spacing: -.03em; }
+    .subheading { margin: 0; color: var(--muted); font-size: 15px; }
+    .primary, .secondary, .tool-button {
+      border: 0; border-radius: 11px; padding: 12px 18px; font-weight: 700;
+      transition: transform .15s, background .15s;
+    }
+    .primary { background: var(--blue); color: white; box-shadow: 0 5px 13px #2868e82c; }
+    .primary:hover { background: #1f58d1; transform: translateY(-1px); }
+    .secondary { background: #eef3fb; color: #344764; }
+    .secondary:hover { background: #e2eafa; }
+    .upload-panel {
+      border: 1.5px dashed #b9c9e2; border-radius: 16px; background: #f9fbff;
+      min-height: 132px; display: flex; align-items: center; justify-content: center; gap: 17px;
+      padding: 22px; cursor: pointer; margin-bottom: 42px; transition: .15s;
+    }
+    .upload-panel:hover, .upload-panel.dragover { border-color: var(--blue); background: #f0f5ff; }
+    .upload-icon { width: 48px; height: 48px; border-radius: 15px; background: #e7efff; color: var(--blue); display: grid; place-items: center; font-size: 24px; }
+    .upload-copy strong { display: block; margin-bottom: 5px; font-size: 16px; }
+    .upload-copy span { color: var(--muted); font-size: 13px; }
+    .section-title { display: flex; align-items: center; gap: 10px; margin: 0 0 17px; font-size: 18px; }
+    .count { color: var(--muted); font-size: 13px; font-weight: 500; }
+    .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); gap: 18px; }
+    .project-card { background: white; border: 1px solid var(--line); border-radius: 15px; overflow: hidden; box-shadow: 0 4px 14px #21375b08; }
+    .preview {
+      height: 145px; background: linear-gradient(140deg, #eaf1fb, #f9fbfe);
+      display: grid; place-items: center; color: #8ba0bf; font-size: 46px;
+    }
+    .preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .card-content { padding: 15px 16px 16px; }
+    .card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0 0 5px; font-size: 15px; }
+    .card-meta { color: var(--muted); font-size: 12px; margin: 0 0 13px; }
+    .card-actions { display: flex; gap: 7px; }
+    .card-actions button { flex: 1; padding: 8px 6px; border: 1px solid var(--line); background: white; border-radius: 8px; color: #41536d; font-size: 12px; }
+    .card-actions button:hover { background: #f4f7fc; }
+    .card-actions .open-project { border-color: #d6e2ff; background: #edf3ff; color: #2159cd; font-weight: 700; }
+    .empty { grid-column: 1 / -1; padding: 34px 12px; text-align: center; color: var(--muted); background: white; border: 1px solid var(--line); border-radius: 14px; }
+    .notice { margin-top: 24px; color: var(--muted); font-size: 12px; text-align: center; }
+
+    .editor { display: none; height: 100vh; height: 100dvh; flex-direction: column; background: #e9edf3; }
+    .editor-header {
+      min-height: 64px; display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; background: white; padding: 0 18px; border-bottom: 1px solid var(--line);
+    }
+    .editor:fullscreen .editor-header { display: none; }
+    .editor:fullscreen .toolbar { max-height: calc(100dvh - 24px); }
+    .editor-left, .editor-right, .toolbar, .tool-group { display: flex; align-items: center; gap: 8px; }
+    .project-name { max-width: 35vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 700; }
+    .icon-button {
+      width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: 10px;
+      background: transparent; color: #40516a; font-size: 20px;
+    }
+    .icon-button:hover { background: #edf2f8; }
+    .toolbar {
+      position: fixed; z-index: 3; top: 50%; right: 14px; transform: translateY(-50%);
+      width: 78px; max-height: calc(100dvh - 140px); overflow-y: auto;
+      flex-direction: column; flex-wrap: nowrap; justify-content: flex-start; gap: 9px;
+      background: white; padding: 10px; border: 1px solid var(--line); border-radius: 14px;
+      box-shadow: 0 5px 20px #20334f24;
+    }
+    .tool-group { width: 100%; flex-direction: column; padding: 0 0 8px; border-right: 0; border-bottom: 1px solid var(--line); }
+    .tool-group:last-child { border-bottom: 0; }
+    .tool-button { padding: 8px 12px; background: white; border: 1px solid #dfe6f0; color: #41536d; font-size: 13px; }
+    .toolbar .tool-button { width: 100%; padding: 8px 4px; white-space: nowrap; font-size: 12px; }
+    .tool-button.active { background: #edf3ff; border-color: #b8ceff; color: #2059d3; }
+    .tool-button:hover { background: #f4f7fc; }
+    .color-palette { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; }
+    .color-swatch { width: 22px; height: 22px; padding: 0; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 0 1px #cbd5e1; }
+    .color-swatch.active { box-shadow: 0 0 0 2px var(--blue); }
+    .size-select { border: 1px solid #dfe6f0; border-radius: 8px; padding: 7px; color: #41536d; background: white; }
+    .zoom-label { min-width: 48px; text-align: center; color: #53647d; font-size: 13px; }
+    .canvas-area { flex: 1; overflow: auto; padding: 24px 110px 24px 24px; display: flex; justify-content: center; align-items: flex-start; }
+    .page-shell { position: relative; flex: none; background: white; box-shadow: 0 5px 24px #20334f2b; }
+    .page-shell canvas { display: block; }
+    #inkCanvas { position: absolute; inset: 0; touch-action: none; }
+    .editor-footer {
+      height: 46px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between;
+      background: white; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px;
+    }
+    .page-controls { display: flex; align-items: center; gap: 12px; }
+    .page-controls button { border: 0; background: transparent; color: #41536d; font-size: 19px; }
+    .page-controls button:disabled { opacity: .3; cursor: default; }
+    .toast { position: fixed; z-index: 5; left: 50%; bottom: 70px; transform: translateX(-50%); background: #1d2c43; color: white; padding: 11px 18px; border-radius: 10px; font-size: 13px; box-shadow: 0 4px 16px #0003; }
+    .toast[hidden] { display: none; }
+    input[type=file] { display: none; }
+    @media (max-width: 700px) {
+      .topbar { height: 64px; padding: 0 5vw; }
+      .top-actions { display: none; }
+      .container { margin-top: 32px; }
+      .heading { align-items: flex-start; flex-direction: column; }
+      .upload-panel { justify-content: flex-start; }
+      .editor-header { padding: 0 8px; }
+      .editor-right .tool-button { padding: 8px; }
+      .toolbar { right: 8px; width: 72px; max-height: calc(100dvh - 125px); }
+      .canvas-area { padding: 14px 90px 14px 14px; }
+      .editor-footer { padding: 0 9px; }
+    }
+  </style>
+</head>
+<body>
+  <header id="topbar" class="topbar">
+    <div class="brand"><div class="brand-mark">✎</div><span>でんし黒板</span></div>
+    <div class="top-actions"><span>授業資料に、自由に書き込み</span></div>
+  </header>
+
+  <main id="home" class="container">
+    <div class="heading">
+      <div><h1>授業の資料をひらく</h1><p class="subheading">PDFや画像に書き込んで、授業の続きをいつでも再開できます。</p></div>
+      <button id="newProjectButton" class="primary">＋ 資料を読み込む</button>
+    </div>
+    <label id="uploadPanel" class="upload-panel" for="fileInput">
+      <span class="upload-icon">↑</span>
+      <span class="upload-copy"><strong>ここに資料をドロップ、またはクリックして選択</strong><span>PDF・JPEG・PNGに対応しています</span></span>
+    </label>
+    <input id="fileInput" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png">
+    <h2 class="section-title">保存した資料 <span id="projectCount" class="count"></span></h2>
+    <div id="projectGrid" class="project-grid"></div>
+    <p class="notice">資料と書き込みは、このブラウザー内に自動保存されます。</p>
+  </main>
+
+  <section id="editor" class="editor" aria-label="資料編集画面">
+    <header class="editor-header">
+      <div class="editor-left">
+        <button id="backButton" class="icon-button" title="資料一覧へ" aria-label="資料一覧へ">←</button>
+        <span id="editorProjectName" class="project-name"></span>
+      </div>
+      <div class="editor-right">
+        <button id="renameInEditor" class="tool-button">名前を変更</button>
+        <button id="exportJpeg" class="tool-button">JPEG出力</button>
+        <button id="exportPdf" class="primary">PDF出力</button>
+        <button id="fullscreenButton" class="tool-button" aria-label="全画面表示">全画面</button>
+      </div>
+    </header>
+    <nav class="toolbar" aria-label="編集ツール">
+      <div class="tool-group">
+        <button class="tool-button active" data-tool="pen">✎ ペン</button>
+        <button class="tool-button" data-tool="highlighter">▰ マーカー</button>
+        <button class="tool-button" data-tool="eraser">消しゴム</button>
+        <button id="undoButton" class="tool-button">↶ 取り消し</button>
+      </div>
+      <div class="tool-group">
+        <div id="colorPalette" class="color-palette" role="group" aria-label="ペンの色"></div>
+        <select id="sizeSelect" class="size-select" aria-label="ペンの太さ">
+          <option value="3">細</option><option value="6" selected>中</option><option value="11">太</option>
+        </select>
+      </div>
+      <div class="tool-group">
+        <button id="zoomOut" class="tool-button" aria-label="縮小">−</button>
+        <span id="zoomLabel" class="zoom-label">100%</span>
+        <button id="zoomIn" class="tool-button" aria-label="拡大">＋</button>
+        <button id="zoomReset" class="tool-button">全体表示</button>
+      </div>
+    </nav>
+    <main id="canvasArea" class="canvas-area">
+      <div id="pageShell" class="page-shell">
+        <canvas id="sourceCanvas"></canvas>
+        <canvas id="inkCanvas"></canvas>
+      </div>
+    </main>
+    <footer class="editor-footer">
+      <span id="saveStatus">自動保存</span>
+      <div class="page-controls">
+        <button id="previousPage" aria-label="前のページ">‹</button>
+        <span id="pageLabel">1 / 1</span>
+        <button id="nextPage" aria-label="次のページ">›</button>
+      </div>
+      <span id="toolStatus">ペンで書き込めます</span>
+    </footer>
+  </section>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const DB_NAME = "denshi-kokuban";
+      const STORE_NAME = "projects";
+      const $ = (selector) => document.querySelector(selector);
+      const home = $("#home");
+      const editor = $("#editor");
+      const fileInput = $("#fileInput");
+      const projectGrid = $("#projectGrid");
+      const sourceCanvas = $("#sourceCanvas");
+      const inkCanvas = $("#inkCanvas");
+      const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+      const inkContext = inkCanvas.getContext("2d");
+      const pageShell = $("#pageShell");
+      const penColors = [
+        ["#111827", "黒"], ["#6b7280", "グレー"], ["#8b4513", "茶色"], ["#ed493f", "赤"],
+        ["#f97316", "オレンジ"], ["#facc15", "黄色"], ["#84cc16", "黄緑"], ["#16a34a", "緑"],
+        ["#14b8a6", "青緑"], ["#06b6d4", "水色"], ["#2563eb", "青"], ["#1e3a8a", "紺"],
+        ["#7c3aed", "紫"], ["#db2777", "ピンク"], ["#f9a8d4", "薄いピンク"], ["#ffffff", "白"]
+      ];
+      let database;
+      let activeProject;
+      let pdfDocument;
+      let imageElement;
+      let pageCount = 1;
+      let currentPage = 1;
+      let zoom = 1;
+      let penColor = "#ed493f";
+      let currentTool = "pen";
+      let activeStroke;
+      let saveTimer;
+      let toastTimer;
+
+      function openDatabase() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open(DB_NAME, 1);
+          request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME, { keyPath: "id" });
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      }
+
+      function requestResult(request) {
+        return new Promise((resolve, reject) => {
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      }
+
+      async function getAllProjects() {
+        return requestResult(database.transaction(STORE_NAME).objectStore(STORE_NAME).getAll());
+      }
+
+      async function getProject(id) {
+        return requestResult(database.transaction(STORE_NAME).objectStore(STORE_NAME).get(id));
+      }
+
+      async function storeProject(project) {
+        project.updatedAt = Date.now();
+        return requestResult(database.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).put(project));
+      }
+
+      async function removeProject(id) {
+        return requestResult(database.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).delete(id));
+      }
+
+      function showToast(message) {
+        const toast = $("#toast");
+        toast.textContent = message;
+        toast.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
+      }
+
+      function formatDate(timestamp) {
+        return new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "short", day: "numeric" }).format(timestamp);
+      }
+
+      async function renderProjectList() {
+        const projects = (await getAllProjects()).sort((a, b) => b.updatedAt - a.updatedAt);
+        $("#projectCount").textContent = `${projects.length}件`;
+        projectGrid.replaceChildren();
+        if (!projects.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "保存した資料はまだありません。上から資料を読み込んでください。";
+          projectGrid.append(empty);
+          return;
+        }
+        for (const project of projects) {
+          const card = document.createElement("article");
+          card.className = "project-card";
+          const preview = document.createElement("div");
+          preview.className = "preview";
+          preview.textContent = project.type === "pdf" ? "▤" : "▧";
+          if (project.type === "image") {
+            const image = document.createElement("img");
+            image.src = URL.createObjectURL(project.file);
+            image.alt = "";
+            image.onload = () => URL.revokeObjectURL(image.src);
+            preview.replaceChildren(image);
+          }
+          const content = document.createElement("div");
+          content.className = "card-content";
+          const title = document.createElement("h3");
+          title.className = "card-title";
+          title.textContent = project.name;
+          const meta = document.createElement("p");
+          meta.className = "card-meta";
+          meta.textContent = `${project.type === "pdf" ? "PDF" : "画像"} ・ ${formatDate(project.updatedAt)}`;
+          const actions = document.createElement("div");
+          actions.className = "card-actions";
+          const openButton = document.createElement("button");
+          openButton.className = "open-project";
+          openButton.textContent = "ひらく";
+          openButton.addEventListener("click", () => openProject(project.id));
+          const renameButton = document.createElement("button");
+          renameButton.textContent = "名前変更";
+          renameButton.addEventListener("click", () => renameProject(project.id));
+          const deleteButton = document.createElement("button");
+          deleteButton.textContent = "削除";
+          deleteButton.addEventListener("click", () => deleteProject(project.id));
+          actions.append(openButton, renameButton, deleteButton);
+          content.append(title, meta, actions);
+          card.append(preview, content);
+          projectGrid.append(card);
+        }
+      }
+
+      async function importFile(file) {
+        if (!file || !(/application\/pdf/.test(file.type) || /^image\/(jpeg|png)$/.test(file.type) || /\.(pdf|jpe?g|png)$/i.test(file.name))) {
+          showToast("PDF・JPEG・PNG形式のファイルを選んでください。");
+          return;
+        }
+        const type = file.type === "application/pdf" || /\.pdf$/i.test(file.name) ? "pdf" : "image";
+        if (type === "pdf" && !window.pdfjsLib) {
+          showToast("PDFの読み込みにはインターネット接続が必要です。");
+          return;
+        }
+        const project = {
+          id: crypto.randomUUID(),
+          name: file.name.replace(/\.[^.]+$/, "") || file.name,
+          type,
+          file,
+          strokes: {},
+          page: 1,
+          zoom: 1,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        await storeProject(project);
+        await openProject(project.id);
+      }
+
+      async function openProject(id) {
+        activeProject = await getProject(id);
+        if (!activeProject) return;
+        $("#editorProjectName").textContent = activeProject.name;
+        currentPage = Math.min(Math.max(activeProject.page || 1, 1), 100000);
+        zoom = activeProject.zoom || 1;
+        home.style.display = "none";
+        $("#topbar").style.display = "none";
+        editor.style.display = "flex";
+        try {
+          const fileUrl = URL.createObjectURL(activeProject.file);
+          if (activeProject.type === "pdf") {
+            if (!window.pdfjsLib) throw new Error("PDF.js が読み込めませんでした。");
+            pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+            pdfDocument = await pdfjsLib.getDocument(fileUrl).promise;
+            pageCount = pdfDocument.numPages;
+            imageElement = null;
+          } else {
+            pdfDocument = null;
+            imageElement = new Image();
+            imageElement.src = fileUrl;
+            await imageElement.decode();
+            pageCount = 1;
+          }
+          currentPage = Math.min(currentPage, pageCount);
+          await renderCurrentPage();
+        } catch (error) {
+          console.error(error);
+          showToast("資料を開けませんでした。ファイル形式や接続を確認してください。");
+          closeEditor();
+        }
+      }
+
+      function dimensionsForImage(scale) {
+        return { width: Math.max(1, Math.round(imageElement.naturalWidth * scale)), height: Math.max(1, Math.round(imageElement.naturalHeight * scale)) };
+      }
+
+      async function renderSource(scale) {
+        if (pdfDocument) {
+          const page = await pdfDocument.getPage(currentPage);
+          const viewport = page.getViewport({ scale });
+          sourceCanvas.width = Math.ceil(viewport.width);
+          sourceCanvas.height = Math.ceil(viewport.height);
+          await page.render({ canvasContext: sourceContext, viewport }).promise;
+        } else {
+          const dimensions = dimensionsForImage(scale);
+          sourceCanvas.width = dimensions.width;
+          sourceCanvas.height = dimensions.height;
+          sourceContext.clearRect(0, 0, dimensions.width, dimensions.height);
+          sourceContext.drawImage(imageElement, 0, 0, dimensions.width, dimensions.height);
+        }
+        pageShell.style.width = `${sourceCanvas.width}px`;
+        pageShell.style.height = `${sourceCanvas.height}px`;
+        inkCanvas.width = sourceCanvas.width;
+        inkCanvas.height = sourceCanvas.height;
+        inkCanvas.style.width = `${sourceCanvas.width}px`;
+        inkCanvas.style.height = `${sourceCanvas.height}px`;
+        redrawStrokes();
+      }
+
+      async function renderCurrentPage() {
+        await renderSource(zoom);
+        $("#zoomLabel").textContent = `${Math.round(zoom * 100)}%`;
+        $("#pageLabel").textContent = `${currentPage} / ${pageCount}`;
+        $("#previousPage").disabled = currentPage <= 1;
+        $("#nextPage").disabled = currentPage >= pageCount;
+        activeProject.page = currentPage;
+        activeProject.zoom = zoom;
+        scheduleSave();
+      }
+
+      function pageStrokes() {
+        activeProject.strokes ||= {};
+        return activeProject.strokes[currentPage] ||= [];
+      }
+
+      function redrawStrokes() {
+        inkContext.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+        for (const stroke of pageStrokes()) {
+          if (!stroke.points.length) continue;
+          inkContext.beginPath();
+          inkContext.moveTo(stroke.points[0].x * inkCanvas.width, stroke.points[0].y * inkCanvas.height);
+          for (const point of stroke.points.slice(1)) inkContext.lineTo(point.x * inkCanvas.width, point.y * inkCanvas.height);
+          inkContext.lineCap = "round";
+          inkContext.lineJoin = "round";
+          inkContext.lineWidth = stroke.width * inkCanvas.width / 1000;
+          inkContext.strokeStyle = stroke.tool === "highlighter" ? `${stroke.color}80` : stroke.color;
+          inkContext.globalCompositeOperation = "source-over";
+          inkContext.stroke();
+        }
+        inkContext.globalCompositeOperation = "source-over";
+      }
+
+      function scheduleSave() {
+        if (!activeProject) return;
+        $("#saveStatus").textContent = "保存中…";
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(async () => {
+          await storeProject(activeProject);
+          $("#saveStatus").textContent = "変更を保存しました";
+        }, 350);
+      }
+
+      function selectTool(tool) {
+        currentTool = tool;
+        document.querySelectorAll("[data-tool]").forEach((button) => button.classList.toggle("active", button.dataset.tool === tool));
+        $("#toolStatus").textContent = tool === "eraser" ? "消したい書き込みをなぞしてください" : "ペンで書き込めます";
+        inkCanvas.style.cursor = tool === "eraser" ? "cell" : "crosshair";
+      }
+
+      function initializeColorPalette() {
+        const palette = $("#colorPalette");
+        for (const [color, name] of penColors) {
+          const swatch = document.createElement("button");
+          swatch.type = "button";
+          swatch.className = "color-swatch";
+          swatch.style.backgroundColor = color;
+          swatch.title = name;
+          swatch.setAttribute("aria-label", name);
+          swatch.setAttribute("aria-pressed", String(color === penColor));
+          swatch.classList.toggle("active", color === penColor);
+          swatch.addEventListener("click", () => {
+            penColor = color;
+            palette.querySelectorAll(".color-swatch").forEach((button) => {
+              const selected = button.style.backgroundColor === swatch.style.backgroundColor;
+              button.classList.toggle("active", selected);
+              button.setAttribute("aria-pressed", String(selected));
+            });
+          });
+          palette.append(swatch);
+        }
+      }
+
+      function getPoint(event) {
+        const rect = inkCanvas.getBoundingClientRect();
+        return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
+      }
+
+      function pointSegmentDistance(point, start, end) {
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const lengthSquared = dx * dx + dy * dy;
+        if (!lengthSquared) return Math.hypot(point.x - start.x, point.y - start.y);
+        const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+        return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
+      }
+
+      function eraseAt(point) {
+        const radius = 18 / inkCanvas.width;
+        const strokes = pageStrokes();
+        activeProject.strokes[currentPage] = strokes.filter((stroke) => {
+          for (let i = 0; i < stroke.points.length; i++) {
+            const previous = stroke.points[Math.max(0, i - 1)];
+            if (pointSegmentDistance(point, previous, stroke.points[i]) < radius + stroke.width / 2000) return false;
+          }
+          return true;
+        });
+        redrawStrokes();
+        scheduleSave();
+      }
+
+      inkCanvas.addEventListener("pointerdown", (event) => {
+        if (!activeProject) return;
+        inkCanvas.setPointerCapture(event.pointerId);
+        const point = getPoint(event);
+        if (currentTool === "eraser") {
+          eraseAt(point);
+          return;
+        }
+        activeStroke = {
+          tool: currentTool,
+          color: penColor,
+          width: Number($("#sizeSelect").value),
+          points: [point]
+        };
+        pageStrokes().push(activeStroke);
+        redrawStrokes();
+      });
+
+      inkCanvas.addEventListener("pointermove", (event) => {
+        if (!inkCanvas.hasPointerCapture(event.pointerId)) return;
+        const point = getPoint(event);
+        if (currentTool === "eraser") {
+          eraseAt(point);
+          return;
+        }
+        if (activeStroke) {
+          activeStroke.points.push(point);
+          redrawStrokes();
+        }
+      });
+
+      function endStroke() {
+        if (activeStroke) {
+          activeStroke = null;
+          scheduleSave();
+        }
+      }
+      inkCanvas.addEventListener("pointerup", endStroke);
+      inkCanvas.addEventListener("pointercancel", endStroke);
+
+      async function exportJpeg() {
+        const pageNumber = currentPage;
+        try {
+          const canvas = await renderComposite(pageNumber, 2);
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+          if (!blob) throw new Error("JPEGの作成に失敗しました。");
+          downloadBlob(blob, `${activeProject.name}-p${pageNumber}.jpg`);
+        } catch (error) {
+          console.error(error);
+          showToast("JPEGを出力できませんでした。");
+        } finally {
+          await renderCurrentPage();
+        }
+      }
+
+      async function renderComposite(pageNumber, scale) {
+        const previousPageNumber = currentPage;
+        try {
+          currentPage = pageNumber;
+          await renderSource(scale);
+          const canvas = document.createElement("canvas");
+          canvas.width = sourceCanvas.width;
+          canvas.height = sourceCanvas.height;
+          const context = canvas.getContext("2d");
+          context.fillStyle = "#fff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(sourceCanvas, 0, 0);
+          context.drawImage(inkCanvas, 0, 0);
+          return canvas;
+        } finally {
+          currentPage = previousPageNumber;
+        }
+      }
+
+      function downloadBlob(blob, name) {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = name;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      async function exportPdf() {
+        if (!window.jspdf?.jsPDF) {
+          showToast("PDF出力ライブラリーを読み込めませんでした。");
+          return;
+        }
+        const button = $("#exportPdf");
+        button.disabled = true;
+        button.textContent = "作成中…";
+        try {
+          let documentPdf;
+          for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+            const canvas = await renderComposite(pageNumber, 1.5);
+            const width = canvas.width * 0.75;
+            const height = canvas.height * 0.75;
+            if (!documentPdf) {
+              documentPdf = new jspdf.jsPDF({ orientation: width > height ? "landscape" : "portrait", unit: "pt", format: [width, height] });
+            } else {
+              documentPdf.addPage([width, height], width > height ? "landscape" : "portrait");
+            }
+            documentPdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, width, height);
+          }
+          documentPdf.save(`${activeProject.name}.pdf`);
+        } catch (error) {
+          console.error(error);
+          showToast("PDFを出力できませんでした。");
+        } finally {
+          await renderCurrentPage();
+          button.disabled = false;
+          button.textContent = "PDF出力";
+        }
+      }
+
+      async function renameProject(id) {
+        const project = await getProject(id);
+        const name = window.prompt("資料の名前", project.name);
+        if (!name?.trim()) return;
+        project.name = name.trim();
+        await storeProject(project);
+        if (activeProject?.id === id) {
+          activeProject.name = project.name;
+          $("#editorProjectName").textContent = project.name;
+        }
+        await renderProjectList();
+      }
+
+      async function deleteProject(id) {
+        const project = await getProject(id);
+        if (!project || !window.confirm(`「${project.name}」を削除しますか？`)) return;
+        await removeProject(id);
+        await renderProjectList();
+      }
+
+      async function closeEditor() {
+        clearTimeout(saveTimer);
+        if (activeProject) storeProject(activeProject);
+        if (document.fullscreenElement === editor) await document.exitFullscreen();
+        activeProject = null;
+        pdfDocument = null;
+        imageElement = null;
+        editor.style.display = "none";
+        $("#topbar").style.display = "";
+        home.style.display = "block";
+        renderProjectList();
+      }
+
+      $("#newProjectButton").addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", async () => {
+        await importFile(fileInput.files[0]);
+        fileInput.value = "";
+      });
+      $("#uploadPanel").addEventListener("dragover", (event) => { event.preventDefault(); $("#uploadPanel").classList.add("dragover"); });
+      $("#uploadPanel").addEventListener("dragleave", () => $("#uploadPanel").classList.remove("dragover"));
+      $("#uploadPanel").addEventListener("drop", async (event) => {
+        event.preventDefault();
+        $("#uploadPanel").classList.remove("dragover");
+        await importFile(event.dataTransfer.files[0]);
+      });
+      $("#backButton").addEventListener("click", closeEditor);
+      $("#fullscreenButton").addEventListener("click", async () => {
+        try {
+          if (document.fullscreenElement) {
+            await document.exitFullscreen();
+          } else if (editor.requestFullscreen) {
+            await editor.requestFullscreen();
+          } else {
+            showToast("このブラウザーは全画面表示に対応していません。");
+          }
+        } catch (error) {
+          console.error(error);
+          showToast("全画面表示にできませんでした。ブラウザーの設定をご確認ください。");
+        }
+      });
+      document.addEventListener("fullscreenchange", () => {
+        const fullscreen = document.fullscreenElement === editor;
+        $("#fullscreenButton").textContent = fullscreen ? "終了" : "全画面";
+        $("#fullscreenButton").setAttribute("aria-label", fullscreen ? "全画面表示を終了" : "全画面表示");
+      });
+      $("#renameInEditor").addEventListener("click", () => renameProject(activeProject.id));
+      $("#exportJpeg").addEventListener("click", exportJpeg);
+      $("#exportPdf").addEventListener("click", exportPdf);
+      $("#zoomIn").addEventListener("click", async () => { zoom = Math.min(zoom * 1.2, 4); await renderCurrentPage(); });
+      $("#zoomOut").addEventListener("click", async () => { zoom = Math.max(zoom / 1.2, 0.25); await renderCurrentPage(); });
+      $("#zoomReset").addEventListener("click", async () => {
+        const area = $("#canvasArea");
+        if (pdfDocument) {
+          const page = await pdfDocument.getPage(currentPage);
+          const viewport = page.getViewport({ scale: 1 });
+          zoom = Math.min((area.clientWidth - 48) / viewport.width, (area.clientHeight - 48) / viewport.height, 1);
+        } else {
+          zoom = Math.min((area.clientWidth - 48) / imageElement.naturalWidth, (area.clientHeight - 48) / imageElement.naturalHeight, 1);
+        }
+        await renderCurrentPage();
+      });
+      $("#previousPage").addEventListener("click", async () => { if (currentPage > 1) { currentPage--; await renderCurrentPage(); } });
+      $("#nextPage").addEventListener("click", async () => { if (currentPage < pageCount) { currentPage++; await renderCurrentPage(); } });
+      $("#undoButton").addEventListener("click", () => {
+        pageStrokes().pop();
+        redrawStrokes();
+        scheduleSave();
+      });
+      document.querySelectorAll("[data-tool]").forEach((button) => button.addEventListener("click", () => selectTool(button.dataset.tool)));
+      document.addEventListener("keydown", async (event) => {
+        if (!activeProject || event.target.matches("input, select")) return;
+        if (event.key === "+" || event.key === "=") { zoom = Math.min(zoom * 1.2, 4); await renderCurrentPage(); }
+        if (event.key === "-") { zoom = Math.max(zoom / 1.2, 0.25); await renderCurrentPage(); }
+      });
+
+      initializeColorPalette();
+      openDatabase().then(async (db) => {
+        database = db;
+        await renderProjectList();
+      }).catch((error) => {
+        console.error(error);
+        showToast("保存機能を開始できませんでした。ブラウザー設定を確認してください。");
+      });
+    })();
+  </script>
+</body>
+</html>
