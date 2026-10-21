@@ -105,6 +105,9 @@
     .size-select { border: 1px solid #dfe6f0; border-radius: 8px; padding: 7px; color: #41536d; background: white; }
     .zoom-label { min-width: 48px; text-align: center; color: #53647d; font-size: 13px; }
     .canvas-area { flex: 1; overflow: auto; padding: 24px 110px 24px 24px; display: flex; justify-content: center; align-items: flex-start; }
+    .editor.navigation-mode .canvas-area { touch-action: none; cursor: grab; }
+    .editor.navigation-mode .canvas-area:active { cursor: grabbing; }
+    .editor.navigation-mode #inkCanvas { pointer-events: none; }
     .page-shell { position: relative; flex: none; background: white; box-shadow: 0 5px 24px #20334f2b; }
     .page-shell canvas { display: block; }
     #inkCanvas { position: absolute; inset: 0; touch-action: none; }
@@ -238,6 +241,13 @@
       let activeStroke;
       let saveTimer;
       let toastTimer;
+      let navigationRenderTimer;
+      const navigationPointers = new Map();
+      let previousPinchDistance = 0;
+      let navigationZoomChanged = false;
+      let previousTouchPoint;
+      let previousTouchDistance = 0;
+      let navigationTouchZoomChanged = false;
 
       function openDatabase() {
         return new Promise((resolve, reject) => {
@@ -464,10 +474,17 @@
       }
 
       function selectTool(tool) {
-        currentTool = tool;
-        document.querySelectorAll("[data-tool]").forEach((button) => button.classList.toggle("active", button.dataset.tool === tool));
-        $("#toolStatus").textContent = tool === "eraser" ? "消したい書き込みをなぞしてください" : "ペンで書き込めます";
-        inkCanvas.style.cursor = tool === "eraser" ? "cell" : "crosshair";
+        currentTool = currentTool === tool && (tool === "pen" || tool === "highlighter") ? "navigate" : tool;
+        editor.classList.toggle("navigation-mode", currentTool === "navigate");
+        document.querySelectorAll("[data-tool]").forEach((button) => {
+          const selected = button.dataset.tool === currentTool;
+          button.classList.toggle("active", selected);
+          button.setAttribute("aria-pressed", String(selected));
+        });
+        $("#toolStatus").textContent = currentTool === "navigate"
+          ? "ドラッグでスクロール、2本指で拡大・縮小できます"
+          : currentTool === "eraser" ? "消したい書き込みをなぞしてください" : "ペンで書き込めます";
+        inkCanvas.style.cursor = currentTool === "eraser" ? "cell" : currentTool === "navigate" ? "grab" : "crosshair";
       }
 
       function initializeColorPalette() {
@@ -522,7 +539,7 @@
       }
 
       inkCanvas.addEventListener("pointerdown", (event) => {
-        if (!activeProject) return;
+        if (!activeProject || currentTool === "navigate") return;
         inkCanvas.setPointerCapture(event.pointerId);
         const point = getPoint(event);
         if (currentTool === "eraser") {
@@ -560,6 +577,112 @@
       }
       inkCanvas.addEventListener("pointerup", endStroke);
       inkCanvas.addEventListener("pointercancel", endStroke);
+
+      function distanceBetweenPointers() {
+        const [first, second] = navigationPointers.values();
+        return Math.hypot(second.x - first.x, second.y - first.y);
+      }
+
+      $("#canvasArea").addEventListener("pointerdown", (event) => {
+        if (event.pointerType === "touch" || currentTool !== "navigate" || !activeProject) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        navigationPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (navigationPointers.size === 2) previousPinchDistance = distanceBetweenPointers();
+      });
+
+      $("#canvasArea").addEventListener("pointermove", (event) => {
+        if (event.pointerType === "touch" || currentTool !== "navigate" || !navigationPointers.has(event.pointerId)) return;
+        const previous = navigationPointers.get(event.pointerId);
+        const current = { x: event.clientX, y: event.clientY };
+        navigationPointers.set(event.pointerId, current);
+        if (navigationPointers.size === 1) {
+          event.currentTarget.scrollLeft -= current.x - previous.x;
+          event.currentTarget.scrollTop -= current.y - previous.y;
+          return;
+        }
+        const distance = distanceBetweenPointers();
+        if (!previousPinchDistance || !distance) {
+          previousPinchDistance = distance;
+          return;
+        }
+        const nextZoom = Math.min(4, Math.max(0.25, zoom * distance / previousPinchDistance));
+        previousPinchDistance = distance;
+        if (nextZoom === zoom) return;
+        zoom = nextZoom;
+        navigationZoomChanged = true;
+        clearTimeout(navigationRenderTimer);
+        navigationRenderTimer = setTimeout(() => renderCurrentPage(), 120);
+      });
+
+      function endNavigationGesture(event) {
+        if (!navigationPointers.has(event.pointerId)) return;
+        navigationPointers.delete(event.pointerId);
+        previousPinchDistance = 0;
+        if (!navigationPointers.size) {
+          clearTimeout(navigationRenderTimer);
+          if (navigationZoomChanged && currentTool === "navigate" && activeProject) renderCurrentPage();
+          navigationZoomChanged = false;
+        }
+      }
+      $("#canvasArea").addEventListener("pointerup", endNavigationGesture);
+      $("#canvasArea").addEventListener("pointercancel", endNavigationGesture);
+
+      function touchDistance(touches) {
+        return Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
+      }
+
+      $("#canvasArea").addEventListener("touchstart", (event) => {
+        if (currentTool !== "navigate" || !activeProject) return;
+        if (event.touches.length === 1) {
+          previousTouchPoint = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+        } else if (event.touches.length === 2) {
+          previousTouchDistance = touchDistance(event.touches);
+          previousTouchPoint = null;
+        }
+      }, { passive: true });
+
+      $("#canvasArea").addEventListener("touchmove", (event) => {
+        if (currentTool !== "navigate" || !activeProject) return;
+        event.preventDefault();
+        if (event.touches.length === 1 && previousTouchPoint) {
+          const point = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+          event.currentTarget.scrollLeft -= point.x - previousTouchPoint.x;
+          event.currentTarget.scrollTop -= point.y - previousTouchPoint.y;
+          previousTouchPoint = point;
+          return;
+        }
+        if (event.touches.length !== 2) return;
+        const distance = touchDistance(event.touches);
+        if (!previousTouchDistance || !distance) {
+          previousTouchDistance = distance;
+          return;
+        }
+        const nextZoom = Math.min(4, Math.max(0.25, zoom * distance / previousTouchDistance));
+        previousTouchDistance = distance;
+        if (nextZoom === zoom) return;
+        zoom = nextZoom;
+        navigationTouchZoomChanged = true;
+        clearTimeout(navigationRenderTimer);
+        navigationRenderTimer = setTimeout(() => renderCurrentPage(), 120);
+      }, { passive: false });
+
+      function endTouchNavigation(event) {
+        if (currentTool !== "navigate") return;
+        if (event.touches.length === 1) {
+          previousTouchPoint = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+          previousTouchDistance = 0;
+          return;
+        }
+        previousTouchPoint = null;
+        previousTouchDistance = 0;
+        if (!event.touches.length) {
+          clearTimeout(navigationRenderTimer);
+          if (navigationTouchZoomChanged && activeProject) renderCurrentPage();
+          navigationTouchZoomChanged = false;
+        }
+      }
+      $("#canvasArea").addEventListener("touchend", endTouchNavigation);
+      $("#canvasArea").addEventListener("touchcancel", endTouchNavigation);
 
       async function exportJpeg() {
         const pageNumber = currentPage;
@@ -724,7 +847,10 @@
         redrawStrokes();
         scheduleSave();
       });
-      document.querySelectorAll("[data-tool]").forEach((button) => button.addEventListener("click", () => selectTool(button.dataset.tool)));
+      document.querySelectorAll("[data-tool]").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.tool === currentTool));
+        button.addEventListener("click", () => selectTool(button.dataset.tool));
+      });
       document.addEventListener("keydown", async (event) => {
         if (!activeProject || event.target.matches("input, select")) return;
         if (event.key === "+" || event.key === "=") { zoom = Math.min(zoom * 1.2, 4); await renderCurrentPage(); }
